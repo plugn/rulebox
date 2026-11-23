@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Rulebox</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="popup">
+    <header class="header">
+      <img class="header__logo" src="icons/icon32.png" alt="" width="28" height="28">
+      <div class="header__titles">
+        <h1 class="header__title">Rulebox</h1>
+        <p class="header__subtitle">Измерительная линейка</p>
+      </div>
+      <span class="badge" id="count" title="Рулбоксов на странице">0</span>
+    </header>
+
+    <fieldset class="colors">
+      <legend class="colors__legend">Цвет рамки</legend>
+      <div class="swatches" id="swatches" role="radiogroup" aria-label="Цвет рамки"></div>
+      <label class="custom">
+        <input class="custom__radio" type="radio" name="borderColor" id="custom-radio" value="custom">
+        <span class="custom__label">Свой цвет</span>
+        <input class="custom__input" type="color" id="color" value="#0000ff" aria-label="Свой цвет рамки">
+      </label>
+    </fieldset>
+
+    <button class="btn btn--primary" id="create" type="button">Создать рулбокс</button>
+
+    <div class="row">
+      <button class="btn" id="remove-last" type="button">Удалить последний</button>
+      <button class="btn" id="remove-all" type="button">Удалить все</button>
+    </div>
+
+    <p class="status" id="status" role="status"></p>
+
+    <footer class="hint">
+      <p>API в консоли страницы: <code>rulebox.create()</code>, <code>rulebox.list()</code>, <code>rulebox.remove(0)</code>.</p>
+      <p>Хоткей: <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>. Каждый следующий рулбокс создаётся соседним цветом палитры.</p>
+    </footer>
+  </main>
+
+  <script src="lib/palette.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

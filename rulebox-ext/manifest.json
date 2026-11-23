@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Rulebox — измерительная линейка",
+  "short_name": "Rulebox",
+  "version": "1.0.0",
+  "description": "Прозрачная линейка поверх страницы: создать, перетащить, изменить размер. API window.rulebox доступно в консоли страницы.",
+  "minimum_chrome_version": "96",
+  "permissions": ["scripting", "activeTab", "storage"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Rulebox",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "commands": {
+    "create-rulebox": {
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      },
+      "description": "Создать рулбокс с текущим цветом"
+    }
+  }
+}

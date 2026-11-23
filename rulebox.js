@@ -106,19 +106,16 @@
     box.style.userSelect = 'none';
     box.style.webkitUserSelect = 'none';
 
-    // Resizer центрируется на правом нижнем углу. Абсолютный потомок
-    // позиционируется относительно padding box родителя, поэтому
-    // компенсируем половину resizer'а и толщину рамки.
+    // Resizer центрируется на том углу, который тянет пользователь.
+    // Абсолютный потомок позиционируется относительно padding box
+    // родителя, поэтому компенсируем половину resizer'а и толщину рамки.
     var resizer = doc.createElement('div');
     resizer.style.position = 'absolute';
-    resizer.style.right = -(RESIZER_SIZE / 2 + BORDER_WIDTH) + 'px';
-    resizer.style.bottom = -(RESIZER_SIZE / 2 + BORDER_WIDTH) + 'px';
     resizer.style.width = RESIZER_SIZE + 'px';
     resizer.style.height = RESIZER_SIZE + 'px';
     resizer.style.boxSizing = 'border-box';
     resizer.style.border = BORDER_WIDTH + 'px solid ' + strokeColor;
     resizer.style.backgroundColor = '#ffffff';
-    resizer.style.cursor = 'nwse-resize';
     resizer.style.display = 'none';
     resizer.style.margin = '0';
     resizer.style.padding = '0';
@@ -160,8 +157,13 @@
     var state = {
       active: false,
       stopTracking: null,
+      flipX: false,
+      flipY: false,
       deactivate: deactivate
     };
+
+    // Начальное положение ручки — правый нижний угол.
+    placeResizer(false, false);
 
     states.set(box, state);
     api._items.push(box);
@@ -234,7 +236,25 @@
       }
       event.preventDefault();
       event.stopPropagation();
-      startTracking(state, applyResize);
+      startTracking(state, createResizeHandler());
+    }
+
+    /**
+     * Якорь ресайза — угол, противоположный текущему положению ручки.
+     * Считаем его один раз в начале жеста, в документных координатах.
+     */
+    function createResizeHandler() {
+      var rect = box.getBoundingClientRect();
+      var left = parseFloat(box.style.left) || 0;
+      var top = parseFloat(box.style.top) || 0;
+      var anchor = {
+        x: state.flipX ? left + rect.width : left,
+        y: state.flipY ? top + rect.height : top
+      };
+
+      return function (moveEvent) {
+        applyResize(moveEvent, anchor);
+      };
     }
 
     function onResizerClick(event) {
@@ -250,13 +270,49 @@
       box.style.top = (parseFloat(box.style.top) || 0) + offsetY + 'px';
     }
 
-    function applyResize(event) {
+    /**
+     * Размер считается от неподвижного якоря до мыши. Когда мышь уходит
+     * за противоположный угол, рулбокс переворачивается и растёт в
+     * другую сторону — ручка всегда остаётся под курсором.
+     */
+    function applyResize(event, anchor) {
       var current = box.getBoundingClientRect();
-      var width = Math.max(MIN_SIZE, event.clientX - current.left);
-      var height = Math.max(MIN_SIZE, event.clientY - current.top);
+      var left = parseFloat(box.style.left) || 0;
+      var top = parseFloat(box.style.top) || 0;
+
+      // Координаты мыши в документе — через дельту от текущего
+      // прямоугольника, чтобы не зависеть от скролла и offsetParent.
+      var pointerX = left + (event.clientX - current.left);
+      var pointerY = top + (event.clientY - current.top);
+
+      var flipX = pointerX < anchor.x;
+      var flipY = pointerY < anchor.y;
+      var width = Math.max(MIN_SIZE, Math.abs(pointerX - anchor.x));
+      var height = Math.max(MIN_SIZE, Math.abs(pointerY - anchor.y));
+
+      box.style.left = (flipX ? anchor.x - width : anchor.x) + 'px';
+      box.style.top = (flipY ? anchor.y - height : anchor.y) + 'px';
       box.style.width = width + 'px';
       box.style.height = height + 'px';
+
+      placeResizer(flipX, flipY);
       updateLabel();
+    }
+
+    /**
+     * Ручка крепится к тому углу, который тянет пользователь. При
+     * перевороте через противоположный угол она переезжает на другую
+     * сторону, а курсор меняется на другую диагональ.
+     */
+    function placeResizer(flipX, flipY) {
+      var offset = -(RESIZER_SIZE / 2 + BORDER_WIDTH) + 'px';
+      resizer.style.left = flipX ? offset : 'auto';
+      resizer.style.right = flipX ? 'auto' : offset;
+      resizer.style.top = flipY ? offset : 'auto';
+      resizer.style.bottom = flipY ? 'auto' : offset;
+      resizer.style.cursor = flipX === flipY ? 'nwse-resize' : 'nesw-resize';
+      state.flipX = flipX;
+      state.flipY = flipY;
     }
   }
 
