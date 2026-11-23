@@ -21,7 +21,7 @@
     window.scrollTo(0, 400);
 
     var box = rulebox.create();
-    var resizer = box.children[1];
+    var resizer = box.querySelector('[data-rulebox-resizer]');
     var label = box.children[0];
     var c = center(box);
     var vw = document.documentElement.clientWidth;

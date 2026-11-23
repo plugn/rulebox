@@ -17,6 +17,28 @@
     if (message.type === 'state') {
       return { ok: true, count: harness.count };
     }
+    if (message.type === 'magnet-refresh') {
+      return { ok: true, vertical: 5, horizontal: 3 };
+    }
+    if (message.type === 'magnet-clear') {
+      return { ok: true, vertical: 0, horizontal: 0 };
+    }
+    if (message.type === 'magnet-auto-enable') {
+      return { ok: true, vertical: 4, horizontal: 2 };
+    }
+    if (message.type === 'magnet-auto-disable') {
+      return { ok: true };
+    }
+    if (message.type === 'auto-state') {
+      return {
+        ok: true,
+        enabled: Boolean(harness.storage.magnetAuto),
+        busy: false,
+        lastAt: Date.now() - 4000,
+        vertical: 4,
+        horizontal: 2
+      };
+    }
     if (message.type === 'create') {
       harness.count += 1;
       return {

@@ -19,7 +19,7 @@
   }
 
   function resizer(box) {
-    return box.children[1];
+    return box.querySelector('[data-rulebox-resizer]');
   }
 
   function color(el) {

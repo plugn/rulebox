@@ -8,6 +8,7 @@
     storage: {},
     badge: { text: null, color: null },
     sent: [],
+    captures: 0,
     command: function (name) {
       commandListeners.forEach(function (fn) {
         fn(name);
@@ -16,6 +17,17 @@
   };
 
   window.__e2e = harness;
+
+  harness.send = function (message) {
+    var sender = message && message.type === 'magnet-auto-refresh'
+      ? { tab: { id: 1, windowId: 7 } }
+      : {};
+    return new Promise(function (resolve) {
+      messageListeners.forEach(function (fn) {
+        fn(message, sender, resolve);
+      });
+    });
+  };
 
   // В service worker здесь был бы importScripts('lib/palette.js'): палитра
   // в харнессе уже подключена отдельным скриптом.
@@ -31,9 +43,12 @@
       },
       sendMessage: function (message, callback) {
         harness.sent.push(message);
+        var sender = message && message.type === 'magnet-auto-refresh'
+          ? { tab: { id: 1, windowId: 7 } }
+          : {};
         new Promise(function (resolve) {
           messageListeners.forEach(function (fn) {
-            fn(message, {}, resolve);
+            fn(message, sender, resolve);
           });
         }).then(callback);
       }
@@ -47,7 +62,37 @@
     },
     tabs: {
       query: function () {
-        return Promise.resolve([{ id: 1, url: 'https://example.test/' }]);
+        return Promise.resolve([{ id: 1, url: 'https://example.test/', windowId: 7 }]);
+      },
+      onUpdated: {
+        addListener: function () {}
+      },
+      // Заглушка снимка вкладки: синтетический «макет» с линиями.
+      captureVisibleTab: function () {
+        harness.captures += 1;
+        harness.captureBadges = harness.captureBadges || [];
+        harness.captureBadges.push({ text: harness.badge.text, color: harness.badge.color });
+        if (harness.failNext) {
+          var reason = harness.failNext;
+          harness.failNext = null;
+          return Promise.reject(new Error(reason));
+        }
+
+        var width = document.documentElement.clientWidth;
+        var height = document.documentElement.clientHeight;
+        var canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+
+        var ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+
+        ctx.fillStyle = '#222222';
+        ctx.fillRect(window.__fixtureX || width - 100, 0, 2, height);
+        ctx.fillRect(0, window.__fixtureY || height - 80, width, 2);
+
+        return Promise.resolve(canvas.toDataURL('image/png'));
       }
     },
     action: {
@@ -82,23 +127,39 @@
         return new Promise(function (resolve, reject) {
           try {
             if (options.files) {
-              if (window.rulebox) {
+              var file = options.files[0] || '';
+              var isDetector = file.indexOf('edges') >= 0;
+              var isActivity = file.indexOf('activity') >= 0;
+
+              if (isDetector && window.ruleboxDetectLines) {
                 resolve([{ result: undefined }]);
                 return;
               }
+              if (!isDetector && !isActivity && window.rulebox) {
+                resolve([{ result: undefined }]);
+                return;
+              }
+
               var script = document.createElement('script');
-              script.src = window.__libPath;
+              if (isActivity) {
+                script.src = window.__activityPath;
+              } else {
+                script.src = isDetector ? window.__edgesPath : window.__libPath;
+              }
               script.onload = function () {
                 resolve([{ result: undefined }]);
               };
               script.onerror = function () {
-                reject(new Error('не удалось загрузить ' + options.files[0]));
+                reject(new Error('не удалось загрузить ' + file));
               };
               document.head.appendChild(script);
               return;
             }
+
             var fn = window.eval('(' + options.func.toString() + ')');
-            resolve([{ result: fn.apply(null, options.args || []) }]);
+            Promise.resolve(fn.apply(null, options.args || [])).then(function (value) {
+              resolve([{ result: value }]);
+            }, reject);
           } catch (error) {
             reject(error);
           }

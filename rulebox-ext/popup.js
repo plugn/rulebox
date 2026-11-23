@@ -7,6 +7,10 @@
  */
 
 var COLOR_KEY = 'borderColor';
+var MAGNET_ENABLED_KEY = 'magnetEnabled';
+var MAGNET_THRESHOLD_KEY = 'magnetThreshold';
+var MAGNET_AUTO_KEY = 'magnetAuto';
+var MAGNET_THRESHOLD_DEFAULT = 6;
 
 var els = {
   count: document.getElementById('count'),
@@ -16,10 +20,19 @@ var els = {
   status: document.getElementById('status'),
   swatches: document.getElementById('swatches'),
   customRadio: document.getElementById('custom-radio'),
-  customColor: document.getElementById('color')
+  customColor: document.getElementById('color'),
+  magnetEnabled: document.getElementById('magnet-enabled'),
+  magnetAuto: document.getElementById('magnet-auto'),
+  magnetAutoStatus: document.getElementById('magnet-auto-status'),
+  magnetThreshold: document.getElementById('magnet-threshold'),
+  magnetThresholdValue: document.getElementById('magnet-threshold-value'),
+  magnetRefresh: document.getElementById('magnet-refresh'),
+  magnetStatus: document.getElementById('magnet-status')
 };
 
 var busy = false;
+var magnetBusy = false;
+var autoBusy = false;
 
 init();
 
@@ -27,6 +40,8 @@ async function init() {
   renderSwatches();
   bindEvents();
   setSelectedColor(await readSavedColor());
+  await restoreMagnet();
+  await restoreAutoMagnet();
   await refreshState();
 }
 
@@ -78,6 +93,200 @@ function bindEvents() {
   els.removeAll.addEventListener('click', function () {
     runRemove('remove-all');
   });
+
+  els.magnetEnabled.addEventListener('change', onMagnetToggle);
+  els.magnetAuto.addEventListener('change', onAutoToggle);
+  els.magnetRefresh.addEventListener('click', function () {
+    runMagnetRefresh('');
+  });
+  els.magnetThreshold.addEventListener('input', onThresholdInput);
+  els.magnetThreshold.addEventListener('change', function () {
+    if (els.magnetEnabled.checked) {
+      runMagnetRefresh('Порог обновлён');
+    }
+  });
+}
+
+async function restoreMagnet() {
+  var enabled = false;
+  var threshold = MAGNET_THRESHOLD_DEFAULT;
+
+  try {
+    var enabledData = await chrome.storage.local.get(MAGNET_ENABLED_KEY);
+    enabled = Boolean(enabledData && enabledData[MAGNET_ENABLED_KEY]);
+    var thresholdData = await chrome.storage.local.get(MAGNET_THRESHOLD_KEY);
+    threshold = normalizeThreshold(thresholdData ? thresholdData[MAGNET_THRESHOLD_KEY] : '');
+  } catch (error) {
+    // Настройки останутся по умолчанию.
+  }
+
+  els.magnetEnabled.checked = enabled;
+  els.magnetThreshold.value = String(threshold);
+  els.magnetThresholdValue.textContent = String(threshold);
+
+  setMagnetStatus(enabled
+    ? 'Магнит включён. Снимок делается по текущему виду — после прокрутки или зума обновите его.'
+    : 'Магнит выключен.');
+}
+
+async function onMagnetToggle() {
+  var enabled = els.magnetEnabled.checked;
+  await persistSetting(MAGNET_ENABLED_KEY, enabled);
+
+  if (!enabled) {
+    if (els.magnetAuto.checked) {
+      els.magnetAuto.checked = false;
+      await persistSetting(MAGNET_AUTO_KEY, false);
+      await sendMessage({ type: 'magnet-auto-disable' });
+      setAutoStatus('Автообновление выключено.');
+    }
+
+    var response = await sendMessage({ type: 'magnet-clear' });
+    setMagnetStatus(response.ok ? 'Магнит выключен.' : (response.error || 'Не удалось выключить магнит.'),
+      !response.ok);
+    return;
+  }
+
+  await runMagnetRefresh('Магнит включён');
+}
+
+async function restoreAutoMagnet() {
+  var enabled = false;
+
+  try {
+    var data = await chrome.storage.local.get(MAGNET_AUTO_KEY);
+    enabled = Boolean(data && data[MAGNET_AUTO_KEY]);
+  } catch (error) {
+    // Настройка останется выключенной.
+  }
+
+  els.magnetAuto.checked = enabled;
+  if (!enabled) {
+    setAutoStatus('Автообновление выключено.');
+    return;
+  }
+
+  var state = await sendMessage({ type: 'auto-state' });
+  if (!state.ok) {
+    setAutoStatus(state.error || 'Автообновление включено.', true);
+    return;
+  }
+
+  setAutoStatus(buildAutoStatus(state));
+}
+
+async function onAutoToggle() {
+  var enabled = els.magnetAuto.checked;
+  await persistSetting(MAGNET_AUTO_KEY, enabled);
+
+  if (!enabled) {
+    setAutoBusy(true);
+    var off = await sendMessage({ type: 'magnet-auto-disable' });
+    setAutoBusy(false);
+    setAutoStatus(off.ok ? 'Автообновление выключено.'
+      : (off.error || 'Не удалось выключить автообновление.'), !off.ok);
+    return;
+  }
+
+  // Авто-режим бессмысленен без самого магнита.
+  if (!els.magnetEnabled.checked) {
+    els.magnetEnabled.checked = true;
+    await persistSetting(MAGNET_ENABLED_KEY, true);
+    setMagnetStatus('Магнит включён. Автообновление при скролле/зуме.');
+  }
+
+  setAutoBusy(true);
+  var response = await sendMessage({ type: 'magnet-auto-enable', threshold: currentThreshold() });
+  setAutoBusy(false);
+
+  if (!response.ok) {
+    setAutoStatus(response.error || 'Не удалось включить автообновление.', true);
+    return;
+  }
+
+  setAutoStatus('Автообновление включено: линий ' + response.vertical + ' вертикальных, ' +
+    response.horizontal + ' горизонтальных.');
+}
+
+function buildAutoStatus(state) {
+  if (!state.lastAt) {
+    return 'Автообновление включено.';
+  }
+  var seconds = Math.max(0, Math.round((Date.now() - state.lastAt) / 1000));
+  var result = state.vertical || state.horizontal
+    ? ', линий ' + (state.vertical || 0) + '×' + (state.horizontal || 0)
+    : '';
+  return 'Автообновление включено, обновлено ' + seconds + ' с назад' + result + '.';
+}
+
+function setAutoStatus(text, isError) {
+  els.magnetAutoStatus.textContent = text;
+  els.magnetAutoStatus.classList.toggle('magnet__status--error', Boolean(isError));
+}
+
+function setAutoBusy(value) {
+  autoBusy = value;
+  els.magnetAuto.disabled = value;
+}
+
+async function runMagnetRefresh(prefix) {
+  if (magnetBusy) {
+    return;
+  }
+  if (!els.magnetEnabled.checked) {
+    setMagnetStatus('Сначала включите магнит.');
+    return;
+  }
+
+  await persistSetting(MAGNET_THRESHOLD_KEY, currentThreshold());
+
+  magnetBusy = true;
+  els.magnetRefresh.disabled = true;
+  var response = await sendMessage({ type: 'magnet-refresh', threshold: currentThreshold() });
+  magnetBusy = false;
+  els.magnetRefresh.disabled = false;
+
+  if (!response.ok) {
+    setMagnetStatus(response.error || 'Не удалось обновить снимок.', true);
+    return;
+  }
+
+  var summary = 'линий: ' + response.vertical + ' вертикальных, ' +
+    response.horizontal + ' горизонтальных.';
+  setMagnetStatus((prefix ? prefix + '. ' : '') + summary);
+}
+
+function onThresholdInput() {
+  var threshold = currentThreshold();
+  els.magnetThresholdValue.textContent = String(threshold);
+  persistSetting(MAGNET_THRESHOLD_KEY, threshold);
+}
+
+function currentThreshold() {
+  return normalizeThreshold(els.magnetThreshold.value);
+}
+
+function normalizeThreshold(value) {
+  var number = parseInt(value, 10);
+  if (!isFinite(number)) {
+    return MAGNET_THRESHOLD_DEFAULT;
+  }
+  return Math.min(20, Math.max(2, number));
+}
+
+function setMagnetStatus(text, isError) {
+  els.magnetStatus.textContent = text;
+  els.magnetStatus.classList.toggle('magnet__status--error', Boolean(isError));
+}
+
+async function persistSetting(key, value) {
+  var patch = {};
+  patch[key] = value;
+  try {
+    await chrome.storage.local.set(patch);
+  } catch (error) {
+    // Не критично: настройка просто не запомнится.
+  }
 }
 
 /** Выбор в пипетке включает радиокнопку «Свой цвет». */

@@ -43,6 +43,15 @@
   // Отступ подписи от нижней границы рулбокса.
   var LABEL_PADDING_BOTTOM = 6;
   var ACTIVE_TEXT_COLOR = '#ffffff';
+  // Прилипание к направляющим «магнита» (в клиентских CSS-пикселях).
+  var SNAP_THRESHOLD = 6;
+  var GUIDE_COLOR = '#e11d48';
+  var GUIDE_ATTR = 'data-rulebox-guide';
+  // Угловая зона: 30x30, но не больше половины ребра.
+  var CORNER_ZONE = 30;
+  // Шаг сдвига рулбокса стрелками (Shift — крупный шаг).
+  var ARROW_STEP = 1;
+  var ARROW_STEP_LARGE = 10;
 
   // Состояние каждого рулбокса. WeakMap, чтобы не мусорить в DOM-элементах.
   var states = new WeakMap();
@@ -52,11 +61,26 @@
   // обновиться. Такой click не должен деактивировать рулбоксы.
   var ignoreClickUntil = 0;
 
+  // Направляющие «магнита» задаются в клиентских координатах вьюпорта:
+  // так они не зависят от скролла, зума и offsetParent.
+  var guides = {
+    vertical: [],
+    horizontal: [],
+    threshold: SNAP_THRESHOLD
+  };
+
+  var guideLines = {
+    vertical: null,
+    horizontal: null
+  };
+
   var api = {
     _items: [],
     create: create,
     list: list,
-    remove: remove
+    remove: remove,
+    setGuides: setGuides,
+    clearGuides: clearGuides
   };
 
   // При повторном запуске сниппета убираем рулбоксы прошлого запуска.
@@ -72,6 +96,14 @@
       }
     }
     previous._items.length = 0;
+
+    // Направляющие прошлого запуска тоже убираем.
+    var oldGuides = doc.querySelectorAll('[' + GUIDE_ATTR + ']');
+    for (var j = 0; j < oldGuides.length; j += 1) {
+      if (oldGuides[j].parentNode) {
+        oldGuides[j].parentNode.removeChild(oldGuides[j]);
+      }
+    }
   })();
 
   root.addEventListener('click', onWindowClick, true);
@@ -81,6 +113,25 @@
 
   function list() {
     return api._items;
+  }
+
+  /**
+   * Линии «магнита» в клиентских координатах вьюпорта (как их отдаёт
+   * снимок вкладки). threshold — расстояние в CSS px, в пределах
+   * которого срабатывает прилипание.
+   */
+  function setGuides(vertical, horizontal, threshold) {
+    guides.vertical = normalizeGuides(vertical);
+    guides.horizontal = normalizeGuides(horizontal);
+    if (typeof threshold === 'number' && isFinite(threshold) && threshold > 0) {
+      guides.threshold = threshold;
+    }
+  }
+
+  function clearGuides() {
+    guides.vertical = [];
+    guides.horizontal = [];
+    hideGuideLines();
   }
 
   function create(borderColor) {
@@ -105,11 +156,16 @@
     box.style.cursor = 'move';
     box.style.userSelect = 'none';
     box.style.webkitUserSelect = 'none';
+    // Рулбокс можно сфокусировать программно (клик/активация), чтобы
+    // работало удаление по Backspace. В Tab-порядок он не попадает.
+    box.tabIndex = -1;
+    box.setAttribute('data-rulebox-item', '');
 
     // Resizer центрируется на том углу, который тянет пользователь.
     // Абсолютный потомок позиционируется относительно padding box
     // родителя, поэтому компенсируем половину resizer'а и толщину рамки.
     var resizer = doc.createElement('div');
+    resizer.setAttribute('data-rulebox-resizer', '');
     resizer.style.position = 'absolute';
     resizer.style.width = RESIZER_SIZE + 'px';
     resizer.style.height = RESIZER_SIZE + 'px';
@@ -140,7 +196,35 @@
     label.style.userSelect = 'none';
     label.style.webkitUserSelect = 'none';
 
+    // Угловые зоны: нажатие внутри угла переключает ручку в этот угол и
+    // сразу позволяет тянуть. Размер зоны — 30px, но не больше половины
+    // ребра, чтобы зоны соседних углов не пересекались.
+    var zones = ['tl', 'tr', 'bl', 'br'].map(function (corner) {
+      var zone = doc.createElement('div');
+      zone.setAttribute('data-rulebox-zone', corner);
+      zone.style.position = 'absolute';
+      zone.style.display = 'none';
+      zone.style.margin = '0';
+      zone.style.padding = '0';
+      zone.style.border = '0';
+      zone.style.backgroundColor = 'transparent';
+      zone.style.pointerEvents = 'auto';
+      zone.style.cursor = (corner === 'tl' || corner === 'br') ? 'nwse-resize' : 'nesw-resize';
+      zone.style.left = corner === 'tl' || corner === 'bl' ? '0' : 'auto';
+      zone.style.right = corner === 'tl' || corner === 'bl' ? 'auto' : '0';
+      zone.style.top = corner === 'tl' || corner === 'tr' ? '0' : 'auto';
+      zone.style.bottom = corner === 'tl' || corner === 'tr' ? 'auto' : '0';
+      zone.addEventListener('mousedown', function (event) {
+        onCornerMouseDown(corner, event);
+      });
+      zone.addEventListener('click', onCornerClick);
+      return zone;
+    });
+
     box.appendChild(label);
+    for (var zoneIndex = 0; zoneIndex < zones.length; zoneIndex += 1) {
+      box.appendChild(zones[zoneIndex]);
+    }
     box.appendChild(resizer);
     (doc.body || doc.documentElement).appendChild(box);
 
@@ -153,6 +237,7 @@
     box.style.left = dx + 'px';
     box.style.top = dy + 'px';
     updateLabel();
+    updateZones();
 
     var state = {
       active: false,
@@ -172,6 +257,7 @@
     box.addEventListener('mouseleave', onMouseLeave);
     box.addEventListener('mousedown', onBoxMouseDown);
     box.addEventListener('click', onBoxClick);
+    box.addEventListener('keydown', onBoxKeyDown);
     resizer.addEventListener('mousedown', onResizerMouseDown);
     resizer.addEventListener('click', onResizerClick);
 
@@ -182,6 +268,20 @@
       setFill(true);
       label.style.color = ACTIVE_TEXT_COLOR;
       resizer.style.display = 'block';
+      showZones();
+      focusBox();
+    }
+
+    /** Фокус на рулбоксе: нужен для удаления по Backspace. */
+    function focusBox() {
+      if (doc.activeElement === box) {
+        return;
+      }
+      try {
+        box.focus({ preventScroll: true });
+      } catch (error) {
+        box.focus();
+      }
     }
 
     function deactivate() {
@@ -192,6 +292,32 @@
       setFill(false);
       label.style.color = strokeColor;
       resizer.style.display = 'none';
+      hideZones();
+    }
+
+    function showZones() {
+      for (var i = 0; i < zones.length; i += 1) {
+        zones[i].style.display = 'block';
+      }
+      updateZones();
+    }
+
+    function hideZones() {
+      for (var i = 0; i < zones.length; i += 1) {
+        zones[i].style.display = 'none';
+      }
+    }
+
+    /** Размер угловой зоны: 30px, но не больше половины ребра. */
+    function updateZones() {
+      var rect = box.getBoundingClientRect();
+      var width = Math.max(1, Math.min(CORNER_ZONE, rect.width / 2));
+      var height = Math.max(1, Math.min(CORNER_ZONE, rect.height / 2));
+
+      for (var i = 0; i < zones.length; i += 1) {
+        zones[i].style.width = width + 'px';
+        zones[i].style.height = height + 'px';
+      }
     }
 
     function setFill(filled) {
@@ -222,6 +348,46 @@
       activate();
     }
 
+    /**
+     * Клавиши на сфокусированном рулбоксе:
+     *  - Backspace/Delete — удалить рулбокс;
+     *  - стрелки — сдвиг на 1px, Shift+стрелки — на 10px.
+     * Обработчик висит на самом рулбоксе, поэтому ввод текста в полях
+     * страницы не затрагивается.
+     */
+    function onBoxKeyDown(event) {
+      if (event.key === 'Backspace' || event.key === 'Delete') {
+        event.preventDefault();
+        event.stopPropagation();
+
+        var index = api._items.indexOf(box);
+        if (index !== -1) {
+          remove(index);
+        }
+        return;
+      }
+
+      var horizontal = event.key === 'ArrowLeft' || event.key === 'ArrowRight';
+      var vertical = event.key === 'ArrowUp' || event.key === 'ArrowDown';
+      if (!horizontal && !vertical) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      var step = event.shiftKey ? ARROW_STEP_LARGE : ARROW_STEP;
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+        step = -step;
+      }
+
+      if (horizontal) {
+        box.style.left = (parseFloat(box.style.left) || 0) + step + 'px';
+      } else {
+        box.style.top = (parseFloat(box.style.top) || 0) + step + 'px';
+      }
+    }
+
     function onBoxMouseDown(event) {
       if (event.button !== 0 || !state.active || resizer.contains(event.target)) {
         return;
@@ -237,6 +403,31 @@
       event.preventDefault();
       event.stopPropagation();
       startTracking(state, createResizeHandler());
+    }
+
+    /**
+     * Нажатие в угловой зоне переключает ручку в этот угол и сразу
+     * начинает отслеживание: клик без движения оставит ручку в углу,
+     * а протяжка сразу изменит размер.
+     */
+    function onCornerMouseDown(corner, event) {
+      if (event.button !== 0 || !state.active) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+
+      placeResizer(
+        corner === 'tl' || corner === 'bl',
+        corner === 'tl' || corner === 'tr'
+      );
+      focusBox();
+      startTracking(state, createResizeHandler());
+    }
+
+    function onCornerClick(event) {
+      // Клик по зоне не должен активировать рулбокс повторно.
+      event.stopPropagation();
     }
 
     /**
@@ -266,8 +457,25 @@
       var current = box.getBoundingClientRect();
       var offsetX = event.clientX - (current.left + current.width / 2);
       var offsetY = event.clientY - (current.top + current.height / 2);
-      box.style.left = (parseFloat(box.style.left) || 0) + offsetX + 'px';
-      box.style.top = (parseFloat(box.style.top) || 0) + offsetY + 'px';
+
+      var snapX = snapEdges(
+        [current.left + offsetX, current.right + offsetX],
+        guides.vertical,
+        guides.threshold
+      );
+      var snapY = snapEdges(
+        [current.top + offsetY, current.bottom + offsetY],
+        guides.horizontal,
+        guides.threshold
+      );
+
+      var shiftX = offsetX + (snapX ? snapX.delta : 0);
+      var shiftY = offsetY + (snapY ? snapY.delta : 0);
+
+      box.style.left = (parseFloat(box.style.left) || 0) + shiftX + 'px';
+      box.style.top = (parseFloat(box.style.top) || 0) + shiftY + 'px';
+
+      showGuideLines(snapX ? snapX.value : null, snapY ? snapY.value : null);
     }
 
     /**
@@ -280,10 +488,23 @@
       var left = parseFloat(box.style.left) || 0;
       var top = parseFloat(box.style.top) || 0;
 
+      // Прилипание считаем в клиентских координатах: там же заданы
+      // направляющие, полученные из снимка вкладки.
+      var clientX = event.clientX;
+      var clientY = event.clientY;
+      var snapX = snapValue(clientX, guides.vertical, guides.threshold);
+      var snapY = snapValue(clientY, guides.horizontal, guides.threshold);
+      if (snapX) {
+        clientX = snapX.value;
+      }
+      if (snapY) {
+        clientY = snapY.value;
+      }
+
       // Координаты мыши в документе — через дельту от текущего
       // прямоугольника, чтобы не зависеть от скролла и offsetParent.
-      var pointerX = left + (event.clientX - current.left);
-      var pointerY = top + (event.clientY - current.top);
+      var pointerX = left + (clientX - current.left);
+      var pointerY = top + (clientY - current.top);
 
       var flipX = pointerX < anchor.x;
       var flipY = pointerY < anchor.y;
@@ -296,7 +517,9 @@
       box.style.height = height + 'px';
 
       placeResizer(flipX, flipY);
+      showGuideLines(snapX ? snapX.value : null, snapY ? snapY.value : null);
       updateLabel();
+      updateZones();
     }
 
     /**
@@ -379,10 +602,13 @@
       root.removeEventListener('mouseout', onWindowMouseOut, true);
       root.removeEventListener('blur', onBlur, false);
       throttled.cancel();
+      hideGuideLines();
+      markGesture(false);
       state.stopTracking = null;
     }
 
     state.stopTracking = cleanup;
+    markGesture(true);
     root.addEventListener('mousemove', onMove, true);
     root.addEventListener('mouseup', onUp, true);
     root.addEventListener('mouseout', onWindowMouseOut, true);
@@ -475,6 +701,130 @@
       Math.round(parseFloat(match[2])),
       Math.round(parseFloat(match[3]))
     ];
+  }
+
+  function normalizeGuides(values) {
+    if (!Array.isArray(values)) {
+      return [];
+    }
+
+    var result = [];
+    for (var i = 0; i < values.length; i += 1) {
+      var value = Number(values[i]);
+      if (isFinite(value)) {
+        result.push(value);
+      }
+    }
+    result.sort(function (a, b) {
+      return a - b;
+    });
+    return result;
+  }
+
+  /** Ближайшая линия в пределах порога; есть ли смысл прилипать. */
+  function snapValue(value, lines, threshold) {
+    var best = null;
+
+    for (var i = 0; i < lines.length; i += 1) {
+      var delta = lines[i] - value;
+      if (Math.abs(delta) <= threshold && (best === null || Math.abs(delta) < Math.abs(best.delta))) {
+        best = { value: lines[i], delta: delta };
+      }
+    }
+
+    return best;
+  }
+
+  /**
+   * Для перетаскивания: ищем линию рядом с любой из граней рулбокса и
+   * отдаём сдвиг, который нужно применить к его позиции.
+   */
+  function snapEdges(edges, lines, threshold) {
+    var best = null;
+
+    for (var i = 0; i < edges.length; i += 1) {
+      var snap = snapValue(edges[i], lines, threshold);
+      if (snap && (best === null || Math.abs(snap.delta) < Math.abs(best.delta))) {
+        best = { value: snap.value, delta: snap.delta };
+      }
+    }
+
+    return best;
+  }
+
+  function ensureGuideLine(axis) {
+    var existing = guideLines[axis];
+    if (existing && existing.parentNode) {
+      return existing;
+    }
+
+    var line = doc.createElement('div');
+    line.setAttribute(GUIDE_ATTR, axis);
+    line.style.position = 'fixed';
+    line.style.zIndex = String(Z_INDEX + 1);
+    line.style.margin = '0';
+    line.style.padding = '0';
+    line.style.border = '0';
+    line.style.pointerEvents = 'none';
+    line.style.backgroundColor = GUIDE_COLOR;
+    line.style.display = 'none';
+
+    if (axis === 'vertical') {
+      line.style.top = '0';
+      line.style.height = '100vh';
+      line.style.width = BORDER_WIDTH + 'px';
+    } else {
+      line.style.left = '0';
+      line.style.width = '100vw';
+      line.style.height = BORDER_WIDTH + 'px';
+    }
+
+    (doc.body || doc.documentElement).appendChild(line);
+    guideLines[axis] = line;
+    return line;
+  }
+
+  /** null скрывает направляющую соответствующей оси. */
+  function showGuideLines(vertical, horizontal) {
+    if (vertical === null) {
+      hideGuideLine('vertical');
+    } else {
+      var verticalLine = ensureGuideLine('vertical');
+      verticalLine.style.left = vertical + 'px';
+      verticalLine.style.display = 'block';
+    }
+
+    if (horizontal === null) {
+      hideGuideLine('horizontal');
+    } else {
+      var horizontalLine = ensureGuideLine('horizontal');
+      horizontalLine.style.top = horizontal + 'px';
+      horizontalLine.style.display = 'block';
+    }
+  }
+
+  function hideGuideLine(axis) {
+    if (guideLines[axis]) {
+      guideLines[axis].style.display = 'none';
+    }
+  }
+
+  function hideGuideLines() {
+    hideGuideLine('vertical');
+    hideGuideLine('horizontal');
+  }
+
+  /**
+   * Мост для авто-режима: пока идёт drag/resize, страница помечена
+   * атрибутом, и слушатель активности не принимает эти события за
+   * прокрутку/panning.
+   */
+  function markGesture(active) {
+    if (active) {
+      doc.documentElement.setAttribute('data-rulebox-gesture', '');
+    } else {
+      doc.documentElement.removeAttribute('data-rulebox-gesture');
+    }
   }
 
   function viewportWidth() {

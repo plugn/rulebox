@@ -50,6 +50,9 @@
     tabs: {
       query: function () {
         return Promise.resolve([{ id: 1, url: 'https://example.test/' }]);
+      },
+      onUpdated: {
+        addListener: function () {}
       }
     },
     action: {

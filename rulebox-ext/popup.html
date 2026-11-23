@@ -35,9 +35,30 @@
 
     <p class="status" id="status" role="status"></p>
 
+    <fieldset class="magnet">
+      <legend class="colors__legend">Магнит</legend>
+      <label class="magnet__toggle">
+        <input type="checkbox" id="magnet-enabled">
+        <span>Прилипание к контрастным линиям</span>
+      </label>
+      <label class="magnet__toggle">
+        <input type="checkbox" id="magnet-auto">
+        <span>Автообновление при скролле/зуме</span>
+      </label>
+      <p class="magnet__status" id="magnet-auto-status" role="status">Автообновление выключено.</p>
+      <div class="magnet__row">
+        <label class="magnet__label" for="magnet-threshold">Порог, px</label>
+        <input class="magnet__range" type="range" id="magnet-threshold" min="2" max="20" step="1" value="6">
+        <output class="magnet__value" id="magnet-threshold-value" for="magnet-threshold">6</output>
+      </div>
+      <button class="btn" id="magnet-refresh" type="button">Обновить снимок</button>
+      <p class="magnet__status" id="magnet-status" role="status">Магнит выключен.</p>
+    </fieldset>
+
     <footer class="hint">
       <p>API в консоли страницы: <code>rulebox.create()</code>, <code>rulebox.list()</code>, <code>rulebox.remove(0)</code>.</p>
       <p>Хоткей: <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>. Каждый следующий рулбокс создаётся соседним цветом палитры.</p>
+      <p>Активный рулбокс удаляется по <kbd>Backspace</kbd>. Стрелки сдвигают его на 1 px, <kbd>Shift</kbd>+стрелки — на 10 px.</p>
     </footer>
   </main>
 

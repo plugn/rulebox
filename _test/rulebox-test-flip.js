@@ -43,7 +43,7 @@
 
   try {
     var box = rulebox.create();
-    var resizer = box.children[1];
+    var resizer = box.querySelector('[data-rulebox-resizer]');
     var label = box.children[0];
     var start = center(box);
     mouse('click', box, start.x, start.y);
