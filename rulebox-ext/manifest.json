@@ -24,13 +24,5 @@
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  },
-  "commands": {
-    "create-rulebox": {
-      "suggested_key": {
-        "default": "Alt+Shift+R"
-      },
-      "description": "Создать рулбокс с текущим цветом"
-    }
   }
 }

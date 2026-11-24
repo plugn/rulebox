@@ -51,11 +51,11 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
   return true;
 });
 
-chrome.commands.onCommand.addListener(function (command) {
-  if (command === 'create-rulebox') {
-    createFromShortcut();
-  }
-});
+// chrome.commands.onCommand.addListener(function (command) {
+//   if (command === 'create-rulebox') {
+//     createFromShortcut();
+//   }
+// });
 
 // После перезагрузки страницы движок и слушатель активности исчезают:
 // сбрасываем устаревшую карту и бейдж, чтобы не показывать старые данные.
